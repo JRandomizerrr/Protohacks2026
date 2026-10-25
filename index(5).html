@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1B2F2B">
+<title>SpeechWriter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Martian+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Desk = a self-healing cutting mat. Paper = the sheet the writer writes on.
+     The paper is the one bold element; everything else stays quiet. */
+  :root {
+    --mat:#1B2F2B; --mat-line:rgba(255,255,255,.055);
+    --panel:#14231F; --panel-2:#0E1A17; --edge:#2A423C;
+    --paper:#F5F6F3; --ink:#15202B; --ink-dim:#5B6670; --rule:#D3D9D4; --paper-edge:#C3CBC6;
+    --text:#E6EEE9; --dim:#93A8A0;
+    --pen:#3D63F5; --pen-hi:#5A7CFF; --focus:#8FB0FF;
+    --stop:#D93A2F; --stop-hi:#EA4A3F;
+    --ok:#6BD6A0; --warn:#F2B544; --err:#FF8A80; --info:#8FA39B; --tx:#8FB0FF;
+    --ui:'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono:'Martian Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    color-scheme:dark;
+  }
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0; min-height:100vh; display:flex; flex-direction:column;
+    font:400 15px/1.5 var(--ui); color:var(--text);
+    background-color:var(--mat);
+    background-image:linear-gradient(var(--mat-line) 1px, transparent 1px), linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+    background-size:28px 28px;
+  }
+  ::selection { background:var(--pen); color:#fff; }
+  :focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+
+  .row { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+
+  /* ---- buttons ---- */
+  button {
+    font:500 14px/1 var(--ui); padding:11px 16px; border-radius:10px;
+    border:1px solid transparent; background:var(--pen); color:#fff; cursor:pointer;
+    transition:background .15s, transform .05s;
+  }
+  button:hover:not(:disabled) { background:var(--pen-hi); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--text); border-color:var(--edge); }
+  button.ghost:hover:not(:disabled) { background:rgba(255,255,255,.07); }
+  button.danger { background:var(--stop); color:#fff; font-weight:600; }
+  button.danger:hover:not(:disabled) { background:var(--stop-hi); }
+
+  /* ---- form controls ---- */
+  input[type=number] {
+    font:400 14px/1.2 var(--ui); color:var(--text); background:var(--panel-2);
+    border:1px solid var(--edge); border-radius:8px; padding:10px 12px; min-width:0; width:100%;
+  }
+  input[type=number]:focus-visible { outline-offset:0; border-color:var(--pen); }
+  label { font-size:13px; color:var(--dim); }
+  label.switch { display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; }
+  input[type=checkbox] {
+    appearance:none; flex:none; position:relative; width:34px; height:20px; margin:0;
+    border-radius:999px; background:var(--edge); cursor:pointer; transition:background .15s;
+  }
+  input[type=checkbox]::after {
+    content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+    background:#C9D6D0; transition:transform .15s, background .15s;
+  }
+  input[type=checkbox]:checked { background:var(--pen); }
+  input[type=checkbox]:checked::after { transform:translateX(14px); background:#fff; }
+
+  /* ---- status lights ---- */
+  .status { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--dim); }
+  .dot { width:8px; height:8px; border-radius:50%; background:#587068; flex:none; }
+  .dot.on { background:var(--ok); }
+  .dot.standby { background:var(--warn); }
+  .dot.rec { background:#FF5A4E; animation:pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity:.3; } }
+
+  /* ---- sticky header: title, status, Stop, alerts ---- */
+  .top { position:sticky; top:0; z-index:20; flex:none; background:var(--mat); border-bottom:1px solid var(--edge); }
+  .top-inner { max-width:1120px; margin:0 auto; padding:12px 24px; display:flex; flex-wrap:wrap; align-items:center; gap:12px 22px; }
+  h1 { margin:0 auto 0 0; font:600 18px/1 var(--ui); letter-spacing:-.01em; }
+  .top-status { display:flex; gap:20px; }
+  #alerts { max-width:1120px; margin:0 auto; padding:0 24px; }
+  .bar {
+    position:relative; overflow:hidden; display:flex; align-items:center; justify-content:space-between; gap:16px;
+    padding:12px 14px 15px; margin-bottom:12px; border-radius:10px;
+    background:#182A52; border:1px solid var(--pen); color:#fff;
+  }
+  .bar[hidden] { display:none; }
+  .bar.err { background:#3A1B1A; border-color:var(--stop); }
+  .bar .msg { display:grid; gap:2px; min-width:0; }
+  .bar .msg b { font-weight:600; }
+  .bar .msg span { font:400 13px/1.4 var(--mono); color:#C9D6FF; overflow-wrap:anywhere; }
+  .bar.err .msg span { font:400 14px/1.4 var(--ui); color:#FFD9D5; }
+  .bar .fill { position:absolute; left:0; bottom:0; height:3px; width:100%; background:var(--pen-hi); transition:width .2s linear; }
+  .bar .row { flex-wrap:nowrap; flex:none; }
+
+  /* ---- layout: paper on the left; settings and activity stacked on the right ---- */
+  .layout {
+    flex:1; width:100%; max-width:1120px; margin:0 auto; padding:24px 24px 8px;
+    display:grid; gap:20px 28px; align-items:start;
+    grid-template-columns:minmax(0,1fr) 340px;
+    grid-template-rows:auto minmax(0,1fr);
+    grid-template-areas:"paper panel" "paper activity";
+  }
+  .note { flex:none; width:100%; max-width:1120px; margin:0 auto; padding:12px 24px 28px; color:var(--dim); font-size:12.5px; line-height:1.6; }
+
+  /* ---- the paper ---- */
+  .paper {
+    grid-area:paper; align-self:stretch;
+    position:relative; display:flex; flex-direction:column; gap:16px; min-height:560px;
+    padding:30px 32px 24px; border-radius:3px; background:var(--paper); color:var(--ink); color-scheme:light;
+    box-shadow:0 1px 0 #fff inset, 0 2px 3px rgba(0,0,0,.35), 0 24px 48px -16px rgba(0,0,0,.6);
+  }
+  /* origin mark: the writer starts writing from the top-left corner */
+  .paper::before {
+    content:''; position:absolute; left:11px; top:11px; width:13px; height:13px; opacity:.45;
+    background:linear-gradient(var(--ink), var(--ink)) center / 1px 100% no-repeat, linear-gradient(var(--ink), var(--ink)) center / 100% 1px no-repeat;
+  }
+  .paper label.switch { color:var(--ink); }
+  .paper input[type=checkbox] { background:var(--paper-edge); }
+  .paper input[type=checkbox]::after { background:#fff; }
+  .paper input[type=checkbox]:checked { background:var(--pen); }
+  .paper button.ghost { color:var(--ink); border-color:var(--paper-edge); }
+  .paper button.ghost:hover:not(:disabled) { background:#E7EAE6; }
+  #micBtn { padding:12px 20px; }
+  #micBtn.live { background:var(--ink); }
+  #micBtn.live:hover { background:#24313F; }
+  #micBtn.live::before { content:''; display:inline-block; width:8px; height:8px; margin-right:9px; border-radius:50%; background:#FF5A4E; animation:pulse 1.2s infinite; }
+  .hint { margin:-6px 0 0; min-height:21px; font-size:14px; color:var(--ink-dim); }
+
+  /* the writer only draws capitals, so the paper shows capitals */
+  #transcript, #pending { text-transform:uppercase; }
+  #transcript { max-height:96px; min-height:48px; overflow:auto; padding-bottom:14px; border-bottom:1px solid var(--rule); font:400 13px/1.7 var(--mono); color:var(--ink-dim); }
+  #interim { opacity:.6; }
+  #pending {
+    flex:1; width:100%; min-height:260px; padding:0 4px; border:0; border-radius:2px; resize:none;
+    font:500 20px/36px var(--mono); color:var(--ink); background-color:transparent;
+    background-image:repeating-linear-gradient(to bottom, transparent 0, transparent 35px, var(--rule) 35px, var(--rule) 36px);
+    background-attachment:local;
+  }
+  #pending::placeholder { color:#8A949C; font-weight:400; text-transform:none; }
+  #pending:focus-visible { outline:2px solid rgba(61,99,245,.4); outline-offset:6px; }
+  .paper-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+  .paper-actions .switch { margin-left:auto; }
+
+  /* ---- settings panel and activity ---- */
+  .panel, .activity { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:18px 20px 20px; min-width:0; }
+  .panel { grid-area:panel; }
+  .activity { grid-area:activity; align-self:stretch; display:flex; flex-direction:column; }
+  h2 { margin:0 0 14px; font:600 14px/1.2 var(--ui); color:var(--text); }
+  #connectBtn { width:100%; margin-bottom:16px; }
+  .stack { display:grid; gap:14px; }
+  .delay { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dim); }
+  .delay input { width:84px; }
+
+  #queue { margin-bottom:10px; }
+  #queue:empty { display:none; }
+  #queue div { font:400 12px/1.6 var(--mono); color:var(--dim); overflow-wrap:anywhere; }
+  #log {
+    height:220px; overflow:auto; padding:10px 12px; border:1px solid var(--edge); border-radius:8px; background:var(--panel-2);
+    font:400 12px/1.65 var(--mono); overflow-wrap:anywhere;
+  }
+  .tx { color:var(--tx); } .rx { color:var(--ok); } .err { color:var(--err); } .warn { color:var(--warn); } .info { color:var(--info); }
+
+  /* On a laptop-sized screen the page fits the window: the paper fills the height and the
+     activity log takes whatever is left on the right, so it is always in view. */
+  @media (min-width:901px) and (min-height:640px) {
+    body { height:100vh; height:100dvh; overflow:hidden; }
+    .layout { min-height:0; overflow:auto; padding-bottom:20px; grid-template-rows:auto minmax(160px,1fr); }   /* scrolls only if alerts squeeze it */
+    .paper { min-height:0; }
+    #pending { min-height:0; overflow:auto; }
+    .activity { min-height:0; }
+    #log { flex:1; height:auto; min-height:80px; }
+  }
+  @media (min-width:901px) and (max-height:800px) {
+    .note { display:none; }   /* short laptop screens: give the space to the paper and the activity log */
+  }
+  @media (max-width:900px) {
+    .layout { grid-template-columns:1fr; grid-template-rows:auto; grid-template-areas:"paper" "activity" "panel"; padding:18px 16px 8px; gap:20px; }
+    .top-inner { padding:10px 16px; }
+    #alerts { padding:0 16px; }
+    .note { padding:12px 16px 32px; }
+    .paper { padding:28px 20px 20px; min-height:460px; }
+    #pending { font-size:18px; }
+  }
+  @media (max-width:560px) {
+    .bar { padding:10px 12px 13px; gap:10px; margin-bottom:8px; }
+    .bar button { padding:9px 12px; }
+    .top-status { order:3; width:100%; }
+    .paper-actions .switch { margin-left:0; width:100%; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    *, *::before, *::after { animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <h1>SpeechWriter</h1>
+    <div class="top-status">
+      <span class="status"><span class="dot" id="serialDot"></span><span id="serialStatus">Not connected</span></span>
+      <span class="status"><span class="dot" id="micDot"></span><span id="micStatus">Mic off</span></span>
+    </div>
+    <button id="stopBtn" class="danger">Stop</button>
+  </div>
+  <div id="alerts">
+    <div id="holdBar" class="bar" role="status" hidden>
+      <div class="msg"><b id="holdCount"></b><span id="holdText"></span></div>
+      <button id="holdCancel" class="danger">Cancel send</button>
+      <div class="fill" id="holdFill"></div>
+    </div>
+    <div id="pauseBar" class="bar err" role="alert" hidden>
+      <div class="msg"><b>Queue paused</b><span id="pauseText"></span></div>
+      <span class="row"><button id="retryBtn">Retry</button><button id="skipBtn" class="ghost">Skip</button></span>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="paper" aria-label="Text to write">
+    <div class="row">
+      <button id="micBtn">Start recording</button>
+      <label class="switch" title="Keeps the microphone open so you can say start and stop instead of using the mouse"><input type="checkbox" id="voiceCmds"> Voice commands</label>
+    </div>
+    <p id="voiceHint" class="hint" aria-live="polite"></p>
+    <div id="transcript"><span id="final"></span> <span id="interim"></span></div>
+    <textarea id="pending" rows="5" placeholder="Speak or type here. Edit the text, then press Send to Writer (Ctrl+Enter)."></textarea>
+    <div class="paper-actions">
+      <button id="approveBtn">Send to Writer</button>
+      <button id="discardBtn" class="ghost">Clear</button>
+      <label class="switch" title="When off, speech is queued automatically after the 3 second hold"><input type="checkbox" id="review" checked> Review before sending</label>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <h2>Parameters</h2>
+    <button id="connectBtn">Connect Writer</button>
+    <div class="stack">
+      <label class="switch"><input type="checkbox" id="simulate"> Simulate (no Writer)</label>
+      <label class="switch"><input type="checkbox" id="waitAck" checked> Wait for Writer to finish each line</label>
+      <label class="delay">Otherwise wait <input type="number" id="delay" value="1500" min="0" step="100"> ms</label>
+    </div>
+  </aside>
+
+  <section class="activity">
+    <h2>Activity</h2>
+    <div id="queue"></div>
+    <div id="log" aria-live="polite"></div>
+  </section>
+</main>
+
+<p class="note">Each line is sent as plain text (A-Z and spaces only) and starts a new row on the paper. The page waits for the Writer to print "Done." before sending the next line. Text is held for 3 seconds after Send so it can be cancelled. After a Writer error the queue pauses until you press Retry or Skip.</p>
+
+<script>
+/*
+ * ARDUINO PROTOCOL (the hardware team's sketch; lines end with \n)
+ *   web -> Uno : plain text, A-Z and spaces only, max 31 chars per line.
+ *                Every line starts a NEW ROW on the paper.
+ *                The sketch has no HOME or STOP command, so this page never sends them
+ *                (they would be drawn as the letters H-O-M-E / S-T-O-P).
+ *   Uno -> web : "Done. Send another line."  when the line has been drawn
+ *                "Line too long. ..."        if a line was over 31 chars
+ * Anything else the Writer prints is just shown in the log.
+ *
+ * VOICE COMMANDS (switch on the paper)
+ *   While on, the microphone stays open. Saying "start" on its own starts recording.
+ *   To stop, stay silent for STOP_PAUSE_MS and then say "stop" on its own. The pause is what
+ *   tells a command apart from the word "stop" used inside a sentence.
+ */
+// ---- presets (change these here, they are not on the page) ----
+const BAUD = 9600;              // must match Serial.begin() in the Writer sketch
+const LINE_CHARS = 12;          // letters that fit across the paper; the sketch allows at most 31
+const LANG = 'en-US';           // speech recognition language
+const MAX_LINE = 31;            // the Writer's line buffer holds 31 characters
+const STOP_BYTE = '!';             // tells the Writer to lift the pen and abandon the line it is drawing
+const STOP_REPLY_MS = 5000;        // how long to wait for "Stopped." before assuming the Writer ignored it
+const SEND_DELAY_MS = 3000;     // hold between pressing Send and the Writer receiving the text
+const STOP_PAUSE_MS = 5000;     // silence needed before "stop" counts as a command
+const ACK_BASE_MS = 30000;      // drawing is slow: wait up to 30 s + 45 s per character for "Done"
+const ACK_PER_CHAR_MS = 45000;
+const MAX_MIC_ERRORS = 3;       // stop the mic after this many errors in a row
+const START_WORDS = ['start', 'start recording'];
+const STOP_WORDS = ['stop', 'stop recording'];
+const SEND_WORDS = ['send', 'send it', 'send text'];
+const CANCEL_WORDS = ['cancel', 'cancel send'];
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+let port, writer, reader, readClosed, writeClosed;
+let connected = false;
+let queue = [], busy = false, ackTimer = null;
+let paused = false, currentLine = null, retryLine = null;
+let held = [];                  // text waiting out the send delay: {text, at, timer}
+let swallowDone = 0;            // "Done" replies still owed by lines that were running when STOP was pressed (only if the Writer ignores Stop)
+let stopping = false, stopTimer = null;   // Stop sent to the Writer, waiting for its "Stopped." reply
+
+// microphone state
+let recog = null;
+let micOn = false;              // the recognizer is running
+let recording = false;          // recognized phrases are written onto the paper
+let micErrors = 0;
+let lastSpeechAt = 0;           // when speech was last heard (used for the 5 second pause before "stop")
+let phraseGap = {};             // result index -> silence before that phrase began
+
+/* ---------- logging / UI ---------- */
+function log(msg, cls = 'info') {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function renderQueue() {
+  $('queue').innerHTML = '';
+  queue.forEach(l => { const d = document.createElement('div'); d.textContent = 'queued: ' + l; $('queue').appendChild(d); });
+}
+function renderHold() {
+  const bar = $('holdBar');
+  if (!held.length) { bar.hidden = true; return; }
+  const left = Math.max(0, held[0].at - Date.now());
+  const more = held.length > 1 ? ' (+' + (held.length - 1) + ' more)' : '';
+  $('holdCount').textContent = 'Sending to Writer in ' + Math.ceil(left / 1000) + 's' + more;
+  $('holdText').textContent = held[0].text;
+  $('holdFill').style.width = (left / SEND_DELAY_MS * 100) + '%';
+  bar.hidden = false;
+}
+function renderPause(msg) {
+  const bar = $('pauseBar');
+  if (!paused) { bar.hidden = true; return; }
+  $('pauseText').textContent = msg + '. Failed line: ' + (retryLine || 'none') + '. ' + queue.length + ' more waiting.';
+  bar.hidden = false;
+}
+function setSerialUI() {
+  $('serialDot').className = 'dot' + (connected ? ' on' : '');
+  $('serialStatus').textContent = connected ? 'Connected' : 'Not connected';
+  $('connectBtn').textContent = connected ? 'Disconnect' : 'Connect Writer';
+}
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+function renderMic() {
+  const state = recording ? 'recording' : (micOn ? 'standby' : 'off');
+  $('micDot').className = 'dot' + (state === 'recording' ? ' rec' : state === 'standby' ? ' standby' : '');
+  setText($('micStatus'), state === 'recording' ? 'Recording' : state === 'standby' ? 'Waiting for "start"' : 'Mic off');
+  setText($('micBtn'), recording ? 'Stop recording' : 'Start recording');
+  $('micBtn').classList.toggle('live', recording);
+  let hint = '';
+  if ($('voiceCmds').checked) {
+    if (held.length) hint = 'Say "cancel" to stop the send.';
+    else if (!recording) hint = $('pending').value.trim() ? 'Say "send" to send the text, "cancel" to clear it, or "start" to record more.' : 'Say "start" to begin recording.';
+    else if (Date.now() - lastSpeechAt >= STOP_PAUSE_MS) hint = 'Say "stop" now to finish, or keep talking.';
+    else hint = 'Recording. To finish, stay silent for ' + STOP_PAUSE_MS / 1000 + ' seconds, then say "stop".';
+  }
+  setText($('voiceHint'), hint);
+}
+setInterval(() => { renderHold(); renderMic(); }, 200);   // keeps the countdown and the voice hint current
+
+/* ---------- serial ---------- */
+async function connect() {
+  if (!('serial' in navigator)) { log('Web Serial not supported. Use Chrome or Edge.', 'err'); return; }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: BAUD });
+
+    const enc = new TextEncoderStream();
+    writeClosed = enc.readable.pipeTo(port.writable);
+    writer = enc.writable.getWriter();
+
+    const dec = new TextDecoderStream();
+    readClosed = port.readable.pipeTo(dec.writable);
+    reader = dec.readable.getReader();
+
+    connected = true; swallowDone = 0; stopping = false; clearTimeout(stopTimer); setSerialUI();
+    log('Port open. Waiting 2s for the Uno to reset...');
+    readLoop();
+    await sleep(2000); // opening the port toggles DTR and reboots the Uno
+    log('Ready.');
+    pump();
+  } catch (e) {
+    log('Connect failed: ' + e.message, 'err');
+  }
+}
+
+async function disconnect() {
+  connected = false;
+  try {
+    await reader.cancel(); await readClosed.catch(() => {});
+    await writer.close(); await writeClosed.catch(() => {});
+    await port.close();
+  } catch (e) { log('Disconnect: ' + e.message, 'err'); }
+  writer = reader = null;
+  clearTimeout(ackTimer); clearTimeout(stopTimer); stopping = false; busy = false;
+  setSerialUI();
+  log('Disconnected.');
+}
+
+// The cable was pulled or the port died without the user pressing Disconnect.
+function connectionLost(reason) {
+  if (!connected) return;
+  connected = false;
+  const wasBusy = busy;
+  clearTimeout(ackTimer); clearTimeout(stopTimer); stopping = false;
+  busy = false;
+  swallowDone = 0;
+  try { port.close().catch(() => {}); } catch (e) {}
+  writer = reader = port = null;
+  setSerialUI();
+  log('Connection lost: ' + reason, 'err');
+  if (wasBusy) fail('Writer disconnected');
+}
+
+async function readLoop() {
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (line) handleLine(line);
+      }
+    }
+  } catch (e) {
+    if (connected) connectionLost('read error: ' + e.message);
+  }
+  if (connected) connectionLost('port closed');
+}
+
+function handleLine(line) {
+  if (line.startsWith('Done')) {
+    log('<- ' + line, 'rx');
+    if (stopping) log('(that line had already finished when Stop was pressed)', 'info');
+    else if (swallowDone > 0) { swallowDone--; log('(that was the line running when STOP was pressed)', 'info'); }
+    else if (busy && $('waitAck').checked) done();
+  } else if (line.startsWith('Stopped')) {
+    log('<- ' + line, 'rx');
+    if (stopping) {
+      clearTimeout(stopTimer); stopping = false; busy = false; currentLine = null;
+      log('Writer stopped: pen lifted, motors released.', 'info');
+      pump();
+    }
+  } else if (/^(Line too (long|wide)|Out of paper)/.test(line)) {
+    log('<- ' + line, 'err');
+    if (busy && !stopping) fail(line);
+  } else log('<- ' + line, 'rx');
+}
+
+async function sendRaw(line) {
+  log('-> ' + line, 'tx');
+  if ($('simulate').checked || !writer) return;
+  await writer.write(line + '\n');
+}
+
+/* ---------- text prep + send hold + queue ---------- */
+// The writer font only has A-Z, so everything is reduced to capital letters and spaces.
+function clean(t) {
+  t = t.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  t = t.replace(/['’`]/g, '');                                  // don't -> DONT
+  const lost = new Set(t.match(/[^A-Z\s.,!?;:\-"()]/g) || []);       // digits and symbols the font cannot draw
+  if (lost.size) log('Cannot draw ' + [...lost].join(' ') + ' (writer font is A-Z only). Skipped.', 'warn');
+  return t.replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();     // other punctuation becomes a space
+}
+function chunk(t) {
+  const max = Math.min(MAX_LINE, LINE_CHARS);
+  const out = []; let cur = '';
+  for (let w of t.split(' ')) {
+    while (w.length > max) { if (cur) { out.push(cur); cur = ''; } out.push(w.slice(0, max)); w = w.slice(max); }
+    if ((cur + ' ' + w).trim().length > max) { out.push(cur); cur = w; }
+    else cur = (cur + ' ' + w).trim();
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// All outgoing text goes through submit(): it waits SEND_DELAY_MS before the
+// Writer sees it, so errors can be spotted and the send cancelled.
+function submit(text) {
+  const t = clean(text);
+  if (!t) { if (text.trim()) log('Nothing the Writer can draw in that text.', 'warn'); return; }
+  const item = { text: t, at: Date.now() + SEND_DELAY_MS };
+  item.timer = setTimeout(() => release(item), SEND_DELAY_MS);
+  held.push(item);
+  renderHold();
+}
+function release(item) {
+  held = held.filter(h => h !== item);
+  chunk(item.text).forEach(c => queue.push(c));
+  renderHold(); renderQueue();
+  pump();
+}
+function cancelHeld() {
+  if (!held.length) return;
+  const text = held.map(h => h.text).join(' ');
+  held.forEach(h => clearTimeout(h.timer));
+  held = [];
+  const p = $('pending');
+  p.value = (p.value ? p.value + ' ' : '') + text;   // give the text back so it can be edited
+  renderHold();
+  log('Send cancelled. Text returned to the editor.', 'info');
+}
+
+const ackMs = line => ACK_BASE_MS + line.length * ACK_PER_CHAR_MS;
+
+async function pump() {
+  if (busy || paused || !queue.length) return;
+  const sim = $('simulate').checked;
+  if (!sim && !connected) { log('Not connected: connect the Writer or tick Simulate.', 'err'); return; }
+  busy = true;
+  currentLine = queue.shift();
+  renderQueue();
+  try { await sendRaw(currentLine); } catch (e) { log('Write failed: ' + e.message, 'err'); return fail('write failed'); }
+  if (sim) ackTimer = setTimeout(done, 400);
+  else if ($('waitAck').checked) {
+    const ms = ackMs(currentLine);
+    ackTimer = setTimeout(() => { log('No reply from Writer after ' + Math.round(ms / 1000) + 's.', 'err'); fail('no reply from Writer'); }, ms);
+  }
+  else ackTimer = setTimeout(done, +$('delay').value || 0);
+}
+function done() { clearTimeout(ackTimer); busy = false; currentLine = null; pump(); }
+
+// Something went wrong with the current line: stop and let the user decide.
+function fail(msg) {
+  clearTimeout(ackTimer);
+  busy = false;
+  paused = true;
+  retryLine = currentLine;
+  renderPause(msg);
+}
+function resume(retry) {
+  if (!paused) return;
+  if (retry && retryLine) queue.unshift(retryLine);
+  retryLine = null; paused = false;
+  renderPause(); renderQueue();
+  pump();
+}
+
+// Stop: drop everything the page is holding, and if the Writer is mid-line send it the
+// stop byte. It lifts the pen, releases the motors and answers "Stopped.".
+function stopAll() {
+  cancelHeld();
+  const wasBusy = busy;
+  queue = []; renderQueue();
+  clearTimeout(ackTimer);
+  paused = false; retryLine = null; renderPause();
+  currentLine = null;
+  if (wasBusy && !$('simulate').checked && writer) {
+    stopping = true;                                   // stay busy until the Writer answers
+    writer.write(STOP_BYTE).catch(e => log('Stop write failed: ' + e.message, 'err'));
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(stopTimedOut, STOP_REPLY_MS);
+    log('Stop sent. Waiting for the Writer to lift the pen...', 'err');
+  } else {
+    busy = false;
+    log('Stopped. Queue cleared.', 'err');
+  }
+}
+// No "Stopped." came back: the Writer probably runs a sketch without Stop support and will finish its line.
+function stopTimedOut() {
+  if (!stopping) return;
+  stopping = false; busy = false;
+  swallowDone++;                                       // its "Done" is still on its way; don't mistake it for the next line
+  log('No reply to Stop. The Writer may be running old software and will finish the line it is drawing.', 'err');
+  pump();
+}
+
+/* ---------- microphone, recording and voice commands ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const said = t => t.toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+
+let audioCtx = null;
+function beep(freq) {          // audible confirmation for people who are not looking at the screen
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = freq; g.gain.value = 0.08;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.15);
+  } catch (e) {}
+}
+
+// The recognizer runs whenever we are recording or voice commands are on.
+function updateMic() {
+  const want = recording || $('voiceCmds').checked;
+  if (want && !micOn) startRecognizer();
+  else if (!want && micOn) stopRecognizer();
+  renderMic();
+}
+function startRecording(how) {
+  if (recording) return;
+  if (!SR) { log('Speech recognition not supported. Use Chrome or Edge.', 'err'); return; }
+  recording = true; lastSpeechAt = Date.now();
+  beep(880);
+  log('Recording started' + (how === 'voice' ? ' by voice.' : '.'), 'info');
+  updateMic();
+}
+function stopRecording(how) {
+  if (!recording) return;
+  recording = false;
+  $('interim').textContent = '';
+  beep(440);
+  log('Recording stopped' + (how === 'voice' ? ' by voice.' : '.'), 'info');
+  updateMic();
+}
+
+// "cancel": stops a send that is counting down; with nothing counting down, clears the paper.
+function voiceCancel() {
+  if (held.length) { cancelHeld(); log('Cancelled by voice.', 'info'); }
+  else if ($('pending').value.trim()) { $('pending').value = ''; log('Paper cleared by voice.', 'info'); }
+}
+
+// One finished phrase from the recognizer. gap = how long it was quiet before the phrase began.
+function onPhrase(text, gap) {
+  const w = said(text);
+  if (!w) return;
+  if (!recording) {                                   // standby: only commands matter; nothing else is kept
+    if (START_WORDS.includes(w)) startRecording('voice');
+    else if (SEND_WORDS.includes(w)) {
+      if ($('pending').value.trim()) { log('Send requested by voice.', 'info'); $('approveBtn').click(); }
+      else log('Heard "send" but the paper is empty.', 'warn');
+    } else if (CANCEL_WORDS.includes(w)) voiceCancel();
+    return;
+  }
+  if (CANCEL_WORDS.includes(w) && held.length) { voiceCancel(); return; }   // text is counting down: "cancel" is a command, not dictation
+  if (STOP_WORDS.includes(w)) {
+    if (gap >= STOP_PAUSE_MS) { stopRecording('voice'); return; }
+    log('Heard "' + w + '" after only ' + (gap / 1000).toFixed(1) + ' s of silence, so it was written as text. Stay silent for ' + STOP_PAUSE_MS / 1000 + ' seconds first to stop recording.', 'warn');
+  }
+  $('final').textContent += ' ' + text;
+  $('transcript').scrollTop = $('transcript').scrollHeight;
+  if ($('review').checked) {
+    const p = $('pending');
+    p.value = (p.value ? p.value + ' ' : '') + text;  // held for approval
+  } else submit(text);
+}
+
+function startRecognizer() {
+  if (!SR) {
+    log('Speech recognition not supported. Use Chrome or Edge.', 'err');
+    recording = false; $('voiceCmds').checked = false;
+    return;
+  }
+  micErrors = 0; micOn = true; phraseGap = {};
+  recog = new SR();
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.lang = LANG;
+  recog.onstart = () => { phraseGap = {}; };
+  recog.onresult = e => {
+    micErrors = 0;
+    const now = Date.now(), before = lastSpeechAt;
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (!(i in phraseGap)) phraseGap[i] = now - before;     // silence before this phrase began
+      if (r.isFinal) onPhrase(r[0].transcript.trim(), phraseGap[i]);
+      else interim += r[0].transcript;
+    }
+    lastSpeechAt = now;
+    $('interim').textContent = recording ? interim : '';
+  };
+  // The browser stops after silence or an error; restart unless the user turned the mic off.
+  recog.onend = () => {
+    phraseGap = {};
+    if (!micOn) return;
+    setTimeout(() => { if (micOn) { try { recog.start(); } catch (e) {} } }, micErrors ? 1000 : 0);
+  };
+  recog.onerror = e => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    micErrors++;
+    const hint = e.error === 'network' ? ' (cannot reach the speech service, check your internet)' : '';
+    log('Mic error: ' + e.error + hint, 'err');
+    const fatal = ['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error);
+    if (fatal || micErrors >= MAX_MIC_ERRORS) {
+      recording = false; $('voiceCmds').checked = false;
+      stopRecognizer();
+      renderMic();
+      log(fatal ? 'Mic stopped.' : 'Mic stopped after repeated errors. Fix the problem, then start again.', 'err');
+    }
+  };
+  recog.start();
+}
+function stopRecognizer() {
+  micOn = false;
+  if (recog) { try { recog.stop(); } catch (e) {} }
+  $('interim').textContent = '';
+}
+
+/* ---------- wiring ---------- */
+$('connectBtn').onclick = () => connected ? disconnect() : connect();
+$('micBtn').onclick = () => recording ? stopRecording('button') : startRecording('button');
+$('voiceCmds').onchange = updateMic;
+$('approveBtn').onclick = () => { submit($('pending').value); $('pending').value = ''; };
+$('discardBtn').onclick = () => { $('pending').value = ''; };
+$('pending').onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('approveBtn').click(); };
+$('stopBtn').onclick = stopAll;
+$('holdCancel').onclick = cancelHeld;
+$('retryBtn').onclick = () => resume(true);
+$('skipBtn').onclick = () => resume(false);
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('disconnect', e => { if (e.target === port) connectionLost('USB cable unplugged'); });
+}
+
+setSerialUI(); renderMic();
+if (!('serial' in navigator)) log('Web Serial unavailable here. Open in Chrome/Edge via http://localhost.', 'err');
+if (!SR) log('Speech recognition unavailable in this browser. Use Chrome/Edge.', 'err');
+</script>
+</body>
+</html>
